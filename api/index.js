@@ -28,48 +28,37 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: "❌ Invalid JSON format." });
   }
 
-  // Check event type - only process messages
+  // Check event type - ONLY PROCESS messages.upsert
   const event = data.data?.event || '';
   debugLog(`Webhook event type: ${event}`);
 
-  if (event !== 'received_message' && event !== 'messages.upsert') {
-    debugLog(`Ignoring non-message event: ${event}`);
-    return res.status(200).json({ message: "⚠️ Ignoring non-message event." });
+  // ===== ONLY PROCESS messages.upsert =====
+  // This prevents duplicate processing from received_message and contacts.update
+  if (event !== 'messages.upsert') {
+    debugLog(`Ignoring event (only processing messages.upsert): ${event}`);
+    return res.status(200).json({ message: `⚠️ Ignoring event: ${event}` });
   }
 
-  // Extract data based on event type
-  let bodyMsg, messageKey, remoteJid, remoteJidAlt;
+  debugLog("Processing messages.upsert event");
 
-  if (event === 'received_message') {
-    // Format 1: received_message event
-    bodyMsg = data.data.message?.body_message || {};
-    messageKey = data.data.message?.message_key || {};
-    remoteJid = messageKey.remoteJid || '';
-    remoteJidAlt = messageKey.remoteJidAlt || '';
-  } else if (event === 'messages.upsert') {
-    // Format 2: messages.upsert event
-    const messages = data.data.data?.messages || [];
-    if (!messages.length) {
-      debugLog("No messages in webhook");
-      return res.status(400).json({ error: "❌ No messages found." });
-    }
-    
-    const firstMessage = messages[0];
-    messageKey = firstMessage.key || {};
-    remoteJid = messageKey.remoteJid || '';
-    remoteJidAlt = messageKey.remoteJidAlt || '';
-    
-    // Extract message text from extendedTextMessage
-    bodyMsg = {
-      messages: firstMessage.message || {},
-      content: firstMessage.message?.extendedTextMessage?.text || ''
-    };
+  // Extract data for messages.upsert format only
+  const messages = data.data.data?.messages || [];
+  if (!messages.length) {
+    debugLog("No messages in webhook");
+    return res.status(400).json({ error: "❌ No messages found." });
   }
+  
+  const firstMessage = messages[0];
+  const messageKey = firstMessage.key || {};
+  let remoteJid = messageKey.remoteJid || '';
+  let remoteJidAlt = messageKey.remoteJidAlt || '';
+  
+  // Extract message text from extendedTextMessage
+  const messageText = firstMessage.message?.extendedTextMessage?.text || '';
 
   debugLog(`remoteJid: ${remoteJid}, remoteJidAlt: ${remoteJidAlt}`);
 
   // Ignore groups, broadcasts, newsletters, etc.
-  // FIXED: Removed '@lid' as it's used for regular 1-on-1 messages
   const ignorePatterns = [
     '@g.us',              // WhatsApp groups
     '@broadcast',         // Broadcast lists
@@ -84,16 +73,6 @@ module.exports = async (req, res) => {
   if (ignorePatterns.some(pattern => remoteJid.toLowerCase().includes(pattern.toLowerCase()))) {
     debugLog(`Ignored remoteJid (matched pattern): ${remoteJid}`);
     return res.status(200).json({ message: `⚠️ Ignored remoteJid: ${remoteJid}` });
-  }
-
-  // Extract message text
-  let messageText = '';
-  if (bodyMsg?.messages?.conversation) {
-    messageText = bodyMsg.messages.conversation;
-  } else if (bodyMsg?.content) {
-    messageText = bodyMsg.content;
-  } else if (bodyMsg?.messages?.extendedTextMessage?.text) {
-    messageText = bodyMsg.messages.extendedTextMessage.text;
   }
 
   debugLog(`messageText: ${messageText}, remoteJid: ${remoteJid}`);
